@@ -15,5 +15,5 @@ Controls:
 - Diagonals: Q/E/Z/C or keypad 1/3/7/9
 - R to restart, Esc or Q to quit.
 
-Next steps:
-- Add level editor, sounds, animations, and online export (Pyodide / WebAssembly).
+## Play online:
+https://seif-sallam.github.io/Inertia/
