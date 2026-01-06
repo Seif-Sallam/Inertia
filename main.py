@@ -3,6 +3,7 @@ import math
 import random
 import sys
 import pygame.gfxdraw
+import asyncio
 
 pygame.init()
 
@@ -89,6 +90,8 @@ def generate_level(level=1, seed=None):
     total_gems = 0
     for y in range(1, GRID_H-1):
         for x in range(1, GRID_W-1):
+            if player_tile_x == x and player_tile_y == y:
+                continue
             if grid[y][x] == '.':
                 r = random.random()
                 if r < gem_density:
@@ -368,7 +371,7 @@ def spawn_collect_particles(cx, cy, color=(120,220,220)):
         particles.append(Particle((cx, cy), (vx, vy), color, 40, 3))
 
 
-def main():
+async def main():
     global level_number, win_timer, player_tile_x, player_tile_y, gems_collected, game_over, game_won
     # generate initial level
     # (mouse hover variable defined above)
@@ -656,9 +659,10 @@ def main():
 
         pygame.display.flip()
         clock.tick(60)
+        await asyncio.sleep(0)  # allow other tasks to run
 
 
-main()
+asyncio.run(main())
 
 pygame.quit()
 sys.exit()
