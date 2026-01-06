@@ -1,5 +1,6 @@
 import pygame
 import math
+import random
 import sys
 
 pygame.init()
@@ -55,6 +56,31 @@ game_over = False
 game_won = False
 total_gems = sum(row.count('G') for row in LEVEL)
 
+# Particles for polish effects
+class Particle:
+    def __init__(self, pos, vel, color, life, radius):
+        self.pos = list(pos)
+        self.vel = list(vel)
+        self.color = color
+        self.life = life
+        self.max_life = life
+        self.radius = radius
+
+    def update(self):
+        self.pos[0] += self.vel[0]
+        self.pos[1] += self.vel[1]
+        self.vel[1] += 0.15  # gravity subtle
+        self.life -= 1
+
+    def draw(self, surf):
+        a = max(0, int(255 * (self.life / self.max_life)))
+        col = (self.color[0], self.color[1], self.color[2], a)
+        s = pygame.Surface((self.radius * 2 + 2, self.radius * 2 + 2), pygame.SRCALPHA)
+        pygame.draw.circle(s, col, (self.radius + 1, self.radius + 1), self.radius)
+        surf.blit(s, (self.pos[0] - self.radius, self.pos[1] - self.radius))
+
+particles = []
+
 def tile_in_bounds(x, y):
     return 0 <= x < GRID_W and 0 <= y < GRID_H
 
@@ -109,6 +135,23 @@ running = True
 
 # track mouse hover
 mouse_hover = (-1, -1)
+
+# small helper to spawn gem particles
+def spawn_gem_particles(tilex, tiley):
+    cx = tilex * TILE_SIZE + TILE_SIZE // 2
+    cy = tiley * TILE_SIZE + TILE_SIZE // 2
+    for i in range(12):
+        ang = i * (2 * math.pi / 12) + random.random()
+        vx = math.cos(ang) * (1 + (i % 3))
+        vy = math.sin(ang) * (1 + (i % 3)) - 2
+        particles.append(Particle((cx, cy), (vx, vy), (120, 220, 220), 40, 3))
+
+def spawn_collect_particles(cx, cy, color=(120,220,220)):
+    for _ in range(12):
+        vx = (random.random() - 0.5) * 6
+        vy = (random.random() - 0.5) * 6
+        particles.append(Particle((cx, cy), (vx, vy), color, 40, 3))
+# (mouse hover variable defined above)
 
 while running:
     for event in pygame.event.get():
@@ -187,6 +230,9 @@ while running:
             player_tile_y = ty // TILE_SIZE
             moving = False
             if tile_in_bounds(player_tile_x, player_tile_y) and grid[player_tile_y][player_tile_x] == 'B':
+                bx = player_tile_x * TILE_SIZE + TILE_SIZE // 2
+                by = player_tile_y * TILE_SIZE + TILE_SIZE // 2
+                spawn_collect_particles(bx, by, (220, 80, 10))
                 game_over = True
         else:
             vx /= dist
@@ -196,12 +242,20 @@ while running:
             cx = int(player_pos[0]) // TILE_SIZE
             cy = int(player_pos[1]) // TILE_SIZE
             if tile_in_bounds(cx, cy) and grid[cy][cx] == 'G':
+                # collect gem and spawn particles
                 grid[cy][cx] = '.'
                 gems_collected += 1
+                px = cx * TILE_SIZE + TILE_SIZE // 2
+                py = cy * TILE_SIZE + TILE_SIZE // 2
+                spawn_collect_particles(px, py, (120, 220, 220))
                 if gems_collected >= total_gems:
                     game_won = True
                     moving = False
             if tile_in_bounds(cx, cy) and grid[cy][cx] == 'B':
+                # bomb explosion particles
+                bx = cx * TILE_SIZE + TILE_SIZE // 2
+                by = cy * TILE_SIZE + TILE_SIZE // 2
+                spawn_collect_particles(bx, by, (220, 80, 10))
                 game_over = True
 
     screen.fill((200, 200, 200))
@@ -213,6 +267,17 @@ while running:
         mouse_hover = (hx, hy)
     else:
         mouse_hover = (-1, -1)
+
+    # compute path preview from hover direction
+    preview_path = []
+    preview_target = None
+    if not moving and not game_over:
+        md = choose_direction_from_mouse(mx, my)
+        if md is not None:
+            pdx, pdy = md
+            ppath, ptile, _ = compute_path_and_target(player_tile_x, player_tile_y, pdx, pdy)
+            preview_path = ppath
+            preview_target = ptile
 
     for y in range(GRID_H):
         for x in range(GRID_W):
@@ -228,21 +293,54 @@ while running:
             if cell == 'B':
                 cx = x * TILE_SIZE + TILE_SIZE // 2
                 cy = y * TILE_SIZE + TILE_SIZE // 2
-                pygame.draw.circle(screen, (0, 0, 0), (cx, cy), TILE_SIZE // 3)
+                # pulsing bomb
+                t = pygame.time.get_ticks() * 0.006
+                pulse = 1 + 0.08 * math.sin(t + x + y)
+                r = int(TILE_SIZE // 3 * pulse)
+                pygame.draw.circle(screen, (30, 30, 30), (cx, cy), r)
+                pygame.draw.circle(screen, (0, 0, 0), (cx, cy), max(2, r-6))
             if cell == 'G':
+                # animated gem pulse
                 cx = x * TILE_SIZE + TILE_SIZE // 2
                 cy = y * TILE_SIZE + TILE_SIZE // 2
+                t = pygame.time.get_ticks() * 0.008
+                s = 1.0 + 0.12 * math.sin(t + x * 0.4 + y * 0.6)
+                r = int((TILE_SIZE // 4) * s)
                 pts = [
-                    (cx, cy - TILE_SIZE // 4),
-                    (cx + TILE_SIZE // 4, cy),
-                    (cx, cy + TILE_SIZE // 4),
-                    (cx - TILE_SIZE // 4, cy),
+                    (cx, cy - r),
+                    (cx + r, cy),
+                    (cx, cy + r),
+                    (cx - r, cy),
                 ]
                 pygame.draw.polygon(screen, (120, 220, 220), pts)
+                pygame.draw.polygon(screen, (80, 180, 180), pts, 2)
+            # preview overlay
+            if (x, y) in preview_path:
+                s = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+                s.fill((255, 255, 120, 60))
+                screen.blit(s, (x * TILE_SIZE, y * TILE_SIZE))
+            if preview_target and (x, y) == preview_target:
+                # target marker
+                tt = pygame.Rect(x * TILE_SIZE + TILE_SIZE//4, y * TILE_SIZE + TILE_SIZE//4, TILE_SIZE//2, TILE_SIZE//2)
+                pygame.draw.rect(screen, (255, 220, 120), tt, 3, border_radius=6)
             # highlight hovered tile when not moving
             if (x, y) == mouse_hover and not moving:
                 pygame.draw.rect(screen, (255, 255, 200), rect, 3)
             pygame.draw.rect(screen, (150, 150, 150), rect, 1)
+
+    # update and draw particles (behind player)
+    for p in particles[:]:
+        p.update()
+        p.draw(screen)
+        if p.life <= 0:
+            particles.remove(p)
+
+    # trailing particles while moving
+    if moving and not game_over:
+        if random.random() < 0.35:
+            px = player_pos[0] + (random.random() - 0.5) * 6
+            py = player_pos[1] + (random.random() - 0.5) * 6
+            particles.append(Particle((px, py), ((random.random()-0.5)*0.6, (random.random()-0.5)*0.6), (50,200,100), 18, 2))
 
     pygame.draw.circle(screen, (0, 180, 0), (int(player_pos[0]), int(player_pos[1])), TILE_SIZE // 3)
 
