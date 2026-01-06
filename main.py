@@ -105,15 +105,16 @@ def generate_level(level=1, seed=None):
     # ensure at least one gem
     if total_gems == 0:
         placed = False
-        for y in range(1, GRID_H-1):
-            for x in range(1, GRID_W-1):
-                if grid[y][x] == '.':
-                    grid[y][x] = 'G'
-                    total_gems = 1
-                    placed = True
+        for _ in range(2):
+            for y in range(1, GRID_H-1):
+                for x in range(1, GRID_W-1):
+                    if grid[y][x] == '.':
+                        grid[y][x] = 'G'
+                        total_gems = 1
+                        placed = True
+                        break
+                if placed:
                     break
-            if placed:
-                break
 
     # reset counters
     gems_collected = 0
