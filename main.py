@@ -3,7 +3,6 @@ import math
 import random
 import sys
 import pygame.gfxdraw
-import asyncio
 
 pygame.init()
 
@@ -371,7 +370,7 @@ def spawn_collect_particles(cx, cy, color=(120,220,220)):
         particles.append(Particle((cx, cy), (vx, vy), color, 40, 3))
 
 
-async def main():
+def main():
     global level_number, win_timer, player_tile_x, player_tile_y, gems_collected, game_over, game_won
     # generate initial level
     # (mouse hover variable defined above)
@@ -659,8 +658,7 @@ async def main():
 
         pygame.display.flip()
         clock.tick(60)
-        await asyncio.sleep(0)  # allow other tasks to run
 
 
-asyncio.run(main())
+main()
 
