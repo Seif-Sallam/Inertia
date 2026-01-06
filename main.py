@@ -372,7 +372,7 @@ def main():
     global level_number, win_timer, player_tile_x, player_tile_y, gems_collected, game_over, game_won
     # generate initial level
     # (mouse hover variable defined above)
-    font = pygame.font.SysFont(None, 20)
+    font = pygame.font.SysFont(None, 26)
     font_big = pygame.font.SysFont(None, 26)
     running = True
 
@@ -621,7 +621,7 @@ def main():
         draw_glossy_circle(screen, player_pos, TILE_SIZE // 3, (20, 180, 60))
 
         # HUD panel
-        hud_w, hud_h = 220, 40
+        hud_w, hud_h = 220, 20
         hud_x, hud_y = 8, HEIGHT - hud_h - 8
         # panel shadow
         sh = pygame.Surface((hud_w, hud_h), pygame.SRCALPHA)
@@ -648,7 +648,7 @@ def main():
         screen.blit(lvl_text, (hud_x + hud_w - lvl_text.get_width() - 12, hud_y + hud_h//2 - lvl_text.get_height()//2))
 
         if game_over:
-            over = font.render("Game Over - You hit a bomb. Press R to restart.", True, (200, 0, 0))
+            over = font.render("Game Over - You hit a bomb. Press R to restart.", True, (255, 0, 0))
             screen.blit(over, (6, 6))
         if game_won:
             win = font.render("You collected all gems! Press R to restart.", True, (0, 150, 0))
