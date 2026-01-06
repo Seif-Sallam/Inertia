@@ -2,6 +2,7 @@ import pygame
 import math
 import random
 import sys
+import pygame.gfxdraw
 
 pygame.init()
 
@@ -83,6 +84,85 @@ particles = []
 
 def tile_in_bounds(x, y):
     return 0 <= x < GRID_W and 0 <= y < GRID_H
+
+
+def draw_vertical_gradient(surf, color_top, color_bottom):
+    w, h = surf.get_size()
+    for i in range(h):
+        t = i / (h - 1)
+        col = (
+            int(color_top[0] * (1 - t) + color_bottom[0] * t),
+            int(color_top[1] * (1 - t) + color_bottom[1] * t),
+            int(color_top[2] * (1 - t) + color_bottom[2] * t),
+        )
+        pygame.draw.line(surf, col, (0, i), (w, i))
+
+
+def draw_glossy_circle(surf, pos, radius, base_color, rim_color=(255,255,255)):
+    # draw shadow/gloss by concentric circles
+    x, y = int(pos[0]), int(pos[1])
+    layers = max(6, radius // 3)
+    for i in range(layers, 0, -1):
+        r = int(radius * (i / layers))
+        alpha = int(200 * (i / layers))
+        col = (base_color[0], base_color[1], base_color[2], alpha)
+        s = pygame.Surface((r*2+2, r*2+2), pygame.SRCALPHA)
+        pygame.gfxdraw.filled_circle(s, r+1, r+1, r, col)
+        surf.blit(s, (x - r - 1, y - r - 1))
+    # rim highlight
+    rim = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
+    pygame.gfxdraw.filled_circle(rim, radius, radius, int(radius*0.6), (255,255,255,80))
+    surf.blit(rim, (x-radius, y-radius), special_flags=pygame.BLEND_ADD)
+
+
+def draw_glossy_gem(surf, tilex, tiley):
+    cx = tilex * TILE_SIZE + TILE_SIZE // 2
+    cy = tiley * TILE_SIZE + TILE_SIZE // 2
+    r = TILE_SIZE // 4
+    # base diamond
+    pts = [
+        (cx, cy - r),
+        (cx + r, cy),
+        (cx, cy + r),
+        (cx - r, cy),
+    ]
+    grad = pygame.Surface((r*2+4, r*2+4), pygame.SRCALPHA)
+    draw_vertical_gradient(grad, (160, 240, 240), (80, 200, 200))
+    # mask diamond onto grad
+    mask = pygame.Surface((r*2+4, r*2+4), pygame.SRCALPHA)
+    pygame.gfxdraw.filled_polygon(mask, [(p[0]-cx+r+2, p[1]-cy+r+2) for p in pts], (255,255,255,255))
+    grad.blit(mask, (0,0), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(grad, (cx - r - 2, cy - r - 2))
+    # outline and shine
+    pygame.gfxdraw.aapolygon(surf, pts, (40,140,140))
+    shine = [(cx - r//2, cy - r//2), (cx + r//4, cy - r//2), (cx + r//2, cy)]
+    pygame.draw.polygon(surf, (255,255,255,90), shine)
+
+
+def draw_glossy_bomb(surf, tilex, tiley):
+    cx = tilex * TILE_SIZE + TILE_SIZE // 2
+    cy = tiley * TILE_SIZE + TILE_SIZE // 2
+    r = TILE_SIZE // 3
+    # glow
+    glow = pygame.Surface((r*4, r*4), pygame.SRCALPHA)
+    for i in range(r*2, 0, -6):
+        a = int(50 * (i / (r*2)))
+        pygame.gfxdraw.filled_circle(glow, r*2, r*2, i, (220, 80, 10, a))
+    surf.blit(glow, (cx - r*2, cy - r*2), special_flags=pygame.BLEND_ADD)
+    # core
+    pygame.gfxdraw.filled_circle(surf, cx, cy, r, (40, 40, 40))
+    pygame.gfxdraw.filled_circle(surf, cx+int(r*0.2), cy-int(r*0.3), int(r*0.4), (180,60,40))
+    pygame.gfxdraw.aacircle(surf, cx, cy, r, (0,0,0))
+
+
+def draw_tile_bevel(surf, rect):
+    # base
+    pygame.draw.rect(surf, (240,240,240), rect, border_radius=6)
+    # top highlight
+    top = pygame.Rect(rect.x+2, rect.y+2, rect.w-4, rect.h//2)
+    s = pygame.Surface((top.w, top.h), pygame.SRCALPHA)
+    draw_vertical_gradient(s, (255,255,255,80), (255,255,255,0))
+    surf.blit(s, (top.x, top.y))
 
 def compute_path_and_target(sx, sy, dx, dy):
     path = []
