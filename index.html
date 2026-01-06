@@ -285,17 +285,17 @@
 
             generateLevel(levelNum) {
                 const seed = Math.floor(Math.random() * (1 << 30));
-                Math.seedrandom(seed);
+                this.seededRandom = this.createSeededRandom(seed);
 
                 // Difficulty scaling
                 const wallDensity = Math.min(0.12 + levelNum * 0.01, 0.30);
                 const bombDensity = Math.min(0.04 + levelNum * 0.01, 0.25);
                 const gemDensity = Math.min(0.06 + levelNum * 0.005, 0.25);
 
-                // Initialize grid
+                // Initialize grid with empty tiles
                 this.grid = Array(GRID_H).fill(null).map(() => Array(GRID_W).fill('.'));
 
-                // Add borders
+                // Add border walls
                 for (let x = 0; x < GRID_W; x++) {
                     this.grid[0][x] = '#';
                     this.grid[GRID_H - 1][x] = '#';
@@ -305,42 +305,49 @@
                     this.grid[y][GRID_W - 1] = '#';
                 }
 
-                // Place random walls
+                // Place random walls (excluding borders)
                 const cells = GRID_W * GRID_H;
-                for (let i = 0; i < Math.floor(cells * wallDensity); i++) {
-                    const x = 1 + Math.floor(Math.random() * (GRID_W - 2));
-                    const y = 1 + Math.floor(Math.random() * (GRID_H - 2));
+                const wallCount = Math.floor(cells * wallDensity);
+                for (let i = 0; i < wallCount; i++) {
+                    const x = 1 + Math.floor(this.seededRandom() * (GRID_W - 2));
+                    const y = 1 + Math.floor(this.seededRandom() * (GRID_H - 2));
                     this.grid[y][x] = '#';
                 }
 
-                // Random walk to create paths
-                let walkX = Math.floor(GRID_W / 2);
-                let walkY = Math.floor(GRID_H / 2);
+                // Random walk to create paths and carve through walls
+                const sx = Math.floor(GRID_W / 2);
+                const sy = Math.floor(GRID_H / 2);
+                let walkX = sx;
+                let walkY = sy;
                 this.grid[walkY][walkX] = 'S';
+
                 const steps = GRID_W * GRID_H * 2;
+                const modulo = Math.max(6, 8 - Math.floor(levelNum / 5));
 
                 for (let i = 0; i < steps; i++) {
-                    const dir = dirs8[Math.floor(Math.random() * dirs8.length)];
+                    const dir = dirs8[Math.floor(this.seededRandom() * dirs8.length)];
                     const nx = walkX + dir.x;
                     const ny = walkY + dir.y;
 
                     if (nx > 0 && nx < GRID_W - 1 && ny > 0 && ny < GRID_H - 1) {
                         walkX = nx;
                         walkY = ny;
+
+                        // Clear walls and set to empty or 'S' for safe tiles
                         this.grid[walkY][walkX] = '.';
 
-                        if (i % Math.max(6, 8 - Math.floor(levelNum / 5)) === 0) {
+                        if (i % modulo === 0) {
                             this.grid[walkY][walkX] = 'S';
                         }
                     }
                 }
 
-                // Place player
+                // Find and place player at first 'S' tile (and clear the 'S')
                 let placed = false;
                 for (let y = 0; y < GRID_H && !placed; y++) {
                     for (let x = 0; x < GRID_W && !placed; x++) {
                         if (this.grid[y][x] === 'S') {
-                            this.grid[y][x] = 'P';
+                            this.grid[y][x] = '.';
                             this.playerTileX = x;
                             this.playerTileY = y;
                             placed = true;
@@ -348,18 +355,24 @@
                     }
                 }
 
+                // Fallback to center if no 'S' tile found
                 if (!placed) {
                     this.playerTileX = Math.floor(GRID_W / 2);
                     this.playerTileY = Math.floor(GRID_H / 2);
-                    this.grid[this.playerTileY][this.playerTileX] = 'P';
+                    this.grid[this.playerTileY][this.playerTileX] = '.';
                 }
 
-                // Place gems and bombs
+                // Place gems and bombs on empty tiles
                 let totalGems = 0;
                 for (let y = 1; y < GRID_H - 1; y++) {
                     for (let x = 1; x < GRID_W - 1; x++) {
+                        // Skip player position
+                        if (x === this.playerTileX && y === this.playerTileY) {
+                            continue;
+                        }
+
                         if (this.grid[y][x] === '.') {
-                            const r = Math.random();
+                            const r = this.seededRandom();
                             if (r < gemDensity) {
                                 this.grid[y][x] = 'G';
                                 totalGems++;
@@ -370,7 +383,7 @@
                     }
                 }
 
-                // Ensure at least one gem
+                // Ensure at least one gem exists
                 if (totalGems === 0) {
                     for (let y = 1; y < GRID_H - 1 && totalGems === 0; y++) {
                         for (let x = 1; x < GRID_W - 1 && totalGems === 0; x++) {
@@ -392,10 +405,19 @@
                 this.playerPos.x = this.playerTileX * TILE_SIZE + TILE_SIZE / 2;
                 this.playerPos.y = this.playerTileY * TILE_SIZE + TILE_SIZE / 2;
 
-                // Save original state
+                // Save original state for restart
                 this.originalGrid = this.grid.map(row => [...row]);
                 this.originalTotalGems = totalGems;
                 this.ogPos = { x: this.playerTileX, y: this.playerTileY };
+            }
+
+            createSeededRandom(seed) {
+                // Linear congruential generator for deterministic randomness
+                let state = seed;
+                return function() {
+                    state = (state * 1103515245 + 12345) & 0x7fffffff;
+                    return state / 0x7fffffff;
+                };
             }
 
             tileInBounds(x, y) {
@@ -999,57 +1021,6 @@
                 loop();
             }
         }
-
-        // Seedrandom implementation
-        window.Math.seedrandom = (function() {
-            const autoseed = function() {
-                try {
-                    const n = new Uint32Array(1);
-                    crypto.getRandomValues(n);
-                    return n[0] >>> 0;
-                } catch (e) {
-                    return (new Date()).getTime();
-                }
-            };
-
-            return function(seed) {
-                if (seed === undefined) seed = autoseed();
-                seed = new String(seed).substring(0, 256);
-
-                let pool = [];
-                let section = 'default';
-                let N = 256;
-
-                function stir() {
-                    for (let i = 0; i < N; i++) {
-                        seed += String.fromCharCode(Math.floor(Math.random() * 256));
-                    }
-                }
-
-                // Initialize pool
-                for (let i = 0; i < N; i++) {
-                    pool[i] = seed.charCodeAt(i % seed.length) || 0;
-                }
-
-                // Shuffle using seed
-                let j = 0;
-                for (let i = N - 1; i > 0; i--) {
-                    j = Math.floor((seed.charCodeAt(j % seed.length) + pool[i]) * 9e-10 * i);
-                    const t = pool[i];
-                    pool[i] = pool[j];
-                    pool[j] = t;
-                }
-
-                let idx = 0;
-
-                Math.random = function() {
-                    const n = pool[idx];
-                    const r = n / 256;
-                    idx = (idx + 1) % 256;
-                    return r;
-                };
-            };
-        }());
 
         // Initialize game
         const canvas = document.getElementById('gameCanvas');
