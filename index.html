@@ -1,0 +1,1059 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inertia Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Arial', sans-serif;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        h1 {
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        canvas {
+            border: 3px solid #333;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            display: block;
+            cursor: crosshair;
+        }
+
+        .controls {
+            color: white;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px 25px;
+            border-radius: 8px;
+            max-width: 500px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .controls h3 {
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .controls p {
+            margin: 5px 0;
+        }
+
+        .button-group {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #45a049;
+        }
+
+        button.secondary {
+            background: #2196F3;
+        }
+
+        button.secondary:hover {
+            background: #0b7dda;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Inertia</h1>
+        <canvas id="gameCanvas" width="480" height="480"></canvas>
+        <div class="controls">
+            <h3>Controls</h3>
+            <p><strong>Arrow Keys / WASD:</strong> Move in 4 directions</p>
+            <p><strong>Q/E/Z/C or Numpad:</strong> Move diagonally</p>
+            <p><strong>Mouse Click:</strong> Click to move in that direction</p>
+            <p><strong>R:</strong> Restart level</p>
+            <p><strong>N:</strong> Next level</p>
+            <div class="button-group">
+                <button onclick="game.restartLevel()">Restart (R)</button>
+                <button class="secondary" onclick="game.nextLevel()">Next Level (N)</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const GRID_W = 15;
+        const GRID_H = 15;
+        const TILE_SIZE = 32;
+        const WIDTH = GRID_W * TILE_SIZE;
+        const HEIGHT = GRID_H * TILE_SIZE;
+
+        const dirs8 = [
+            { x: 1, y: 0 },   // right
+            { x: 1, y: -1 },  // top-right
+            { x: 0, y: -1 },  // top
+            { x: -1, y: -1 }, // top-left
+            { x: -1, y: 0 },  // left
+            { x: -1, y: 1 },  // bottom-left
+            { x: 0, y: 1 },   // bottom
+            { x: 1, y: 1 }    // bottom-right
+        ];
+
+        // Particle system
+        class Particle {
+            constructor(x, y, vx, vy, color, life, radius) {
+                this.x = x;
+                this.y = y;
+                this.vx = vx;
+                this.vy = vy;
+                this.color = color;
+                this.life = life;
+                this.maxLife = life;
+                this.radius = radius;
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.15; // gravity
+                this.life -= 1;
+            }
+
+            draw(ctx) {
+                const alpha = Math.max(0, this.life / this.maxLife);
+                ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${alpha})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+
+        // Explosion class
+        class Explosion {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.maxLife = 120;
+                this.life = this.maxLife;
+                this.radius = 0;
+
+                // Calculate max radius to screen corners
+                const corners = [
+                    { x: 0, y: 0 },
+                    { x: WIDTH, y: 0 },
+                    { x: 0, y: HEIGHT },
+                    { x: WIDTH, y: HEIGHT }
+                ];
+                let maxDist = 0;
+                for (const corner of corners) {
+                    const d = Math.hypot(this.x - corner.x, this.y - corner.y);
+                    if (d > maxDist) maxDist = d;
+                }
+                this.maxRadius = maxDist * 1.35;
+
+                // Spawn particles
+                for (let i = 0; i < 120; i++) {
+                    const angle = Math.random() * 2 * Math.PI;
+                    const speed = 2.5 + Math.random() * 9.5;
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed;
+                    const color = Math.random() < 0.6
+                        ? { r: 255, g: 210, b: 140 }
+                        : { r: 220, g: 80, b: 10 };
+                    const life = 40 + Math.random() * 60;
+                    const radius = 2 + Math.random() * 2;
+                    game.particles.push(new Particle(this.x, this.y, vx, vy, color, life, radius));
+                }
+            }
+
+            update() {
+                const progress = 1.0 - (this.life / this.maxLife);
+                const eased = Math.pow(progress, 0.85);
+                this.radius = this.maxRadius * eased;
+                this.life -= 1;
+            }
+
+            draw(ctx) {
+                const prog = 1.0 - (this.life / this.maxLife);
+                const imageData = ctx.getImageData(0, 0, WIDTH, HEIGHT);
+                const data = imageData.data;
+
+                // Draw glow rings
+                for (let i = 6; i > 0; i--) {
+                    const t = prog * (0.8 + i * 0.04);
+                    const rr = Math.floor(this.maxRadius * Math.min(1.0, t));
+                    if (rr < 2) continue;
+
+                    const a = Math.floor(200 * (1.0 - (i - 1) / 6.0) * Math.min(1.0, prog * 1.5));
+                    ctx.fillStyle = `rgba(255, ${200 - i * 10}, 120, ${a / 255})`;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, rr, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Flash effect
+                const flashStrength = Math.floor(255 * Math.min(1.0, prog * 2.2));
+                if (flashStrength > 8) {
+                    ctx.fillStyle = `rgba(255, 245, 230, ${flashStrength / 255})`;
+                    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                }
+
+                // Vignette
+                if (prog > 0.25) {
+                    const darkAlpha = Math.floor(180 * Math.min(1.0, (prog - 0.25) / 0.75));
+                    ctx.fillStyle = `rgba(20, 12, 6, ${darkAlpha / 255})`;
+                    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                }
+            }
+
+            isDead() {
+                return this.life <= 0;
+            }
+        }
+
+        // Game class
+        class Game {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+                this.levelNumber = 1;
+                this.particles = [];
+                this.explosion = null;
+                this.winTimer = null;
+                this.gameOver = false;
+                this.gameWon = false;
+                this.moving = false;
+                this.mouseHover = { x: -1, y: -1 };
+
+                this.grid = [];
+                this.playerTileX = 0;
+                this.playerTileY = 0;
+                this.playerPos = { x: 0, y: 0 };
+                this.moveTarget = { x: 0, y: 0 };
+                this.moveDir = { x: 0, y: 0 };
+                this.moveSpeed = 6.0;
+                this.gemsCollected = 0;
+                this.totalGems = 0;
+                this.originalGrid = [];
+                this.originalTotalGems = 0;
+                this.ogPos = { x: 0, y: 0 };
+
+                this.generateLevel(this.levelNumber);
+
+                // Event listeners
+                canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                canvas.addEventListener('click', (e) => this.handleClick(e));
+                document.addEventListener('keydown', (e) => this.handleKeyDown(e));
+
+                this.startGameLoop();
+            }
+
+            generateLevel(levelNum) {
+                const seed = Math.floor(Math.random() * (1 << 30));
+                Math.seedrandom(seed);
+
+                // Difficulty scaling
+                const wallDensity = Math.min(0.12 + levelNum * 0.01, 0.30);
+                const bombDensity = Math.min(0.04 + levelNum * 0.01, 0.25);
+                const gemDensity = Math.min(0.06 + levelNum * 0.005, 0.25);
+
+                // Initialize grid
+                this.grid = Array(GRID_H).fill(null).map(() => Array(GRID_W).fill('.'));
+
+                // Add borders
+                for (let x = 0; x < GRID_W; x++) {
+                    this.grid[0][x] = '#';
+                    this.grid[GRID_H - 1][x] = '#';
+                }
+                for (let y = 0; y < GRID_H; y++) {
+                    this.grid[y][0] = '#';
+                    this.grid[y][GRID_W - 1] = '#';
+                }
+
+                // Place random walls
+                const cells = GRID_W * GRID_H;
+                for (let i = 0; i < Math.floor(cells * wallDensity); i++) {
+                    const x = 1 + Math.floor(Math.random() * (GRID_W - 2));
+                    const y = 1 + Math.floor(Math.random() * (GRID_H - 2));
+                    this.grid[y][x] = '#';
+                }
+
+                // Random walk to create paths
+                let walkX = Math.floor(GRID_W / 2);
+                let walkY = Math.floor(GRID_H / 2);
+                this.grid[walkY][walkX] = 'S';
+                const steps = GRID_W * GRID_H * 2;
+
+                for (let i = 0; i < steps; i++) {
+                    const dir = dirs8[Math.floor(Math.random() * dirs8.length)];
+                    const nx = walkX + dir.x;
+                    const ny = walkY + dir.y;
+
+                    if (nx > 0 && nx < GRID_W - 1 && ny > 0 && ny < GRID_H - 1) {
+                        walkX = nx;
+                        walkY = ny;
+                        this.grid[walkY][walkX] = '.';
+
+                        if (i % Math.max(6, 8 - Math.floor(levelNum / 5)) === 0) {
+                            this.grid[walkY][walkX] = 'S';
+                        }
+                    }
+                }
+
+                // Place player
+                let placed = false;
+                for (let y = 0; y < GRID_H && !placed; y++) {
+                    for (let x = 0; x < GRID_W && !placed; x++) {
+                        if (this.grid[y][x] === 'S') {
+                            this.grid[y][x] = 'P';
+                            this.playerTileX = x;
+                            this.playerTileY = y;
+                            placed = true;
+                        }
+                    }
+                }
+
+                if (!placed) {
+                    this.playerTileX = Math.floor(GRID_W / 2);
+                    this.playerTileY = Math.floor(GRID_H / 2);
+                    this.grid[this.playerTileY][this.playerTileX] = 'P';
+                }
+
+                // Place gems and bombs
+                let totalGems = 0;
+                for (let y = 1; y < GRID_H - 1; y++) {
+                    for (let x = 1; x < GRID_W - 1; x++) {
+                        if (this.grid[y][x] === '.') {
+                            const r = Math.random();
+                            if (r < gemDensity) {
+                                this.grid[y][x] = 'G';
+                                totalGems++;
+                            } else if (r < gemDensity + bombDensity) {
+                                this.grid[y][x] = 'B';
+                            }
+                        }
+                    }
+                }
+
+                // Ensure at least one gem
+                if (totalGems === 0) {
+                    for (let y = 1; y < GRID_H - 1 && totalGems === 0; y++) {
+                        for (let x = 1; x < GRID_W - 1 && totalGems === 0; x++) {
+                            if (this.grid[y][x] === '.') {
+                                this.grid[y][x] = 'G';
+                                totalGems = 1;
+                            }
+                        }
+                    }
+                }
+
+                this.totalGems = totalGems;
+                this.gemsCollected = 0;
+                this.gameOver = false;
+                this.gameWon = false;
+                this.moving = false;
+                this.winTimer = null;
+
+                this.playerPos.x = this.playerTileX * TILE_SIZE + TILE_SIZE / 2;
+                this.playerPos.y = this.playerTileY * TILE_SIZE + TILE_SIZE / 2;
+
+                // Save original state
+                this.originalGrid = this.grid.map(row => [...row]);
+                this.originalTotalGems = totalGems;
+                this.ogPos = { x: this.playerTileX, y: this.playerTileY };
+            }
+
+            tileInBounds(x, y) {
+                return x >= 0 && x < GRID_W && y >= 0 && y < GRID_H;
+            }
+
+            computePathAndTarget(sx, sy, dx, dy) {
+                const path = [];
+                let x = sx;
+                let y = sy;
+                let bombHit = null;
+
+                while (true) {
+                    x += dx;
+                    y += dy;
+
+                    if (!this.tileInBounds(x, y)) {
+                        x -= dx;
+                        y -= dy;
+                        break;
+                    }
+
+                    const cell = this.grid[y][x];
+                    if (cell === '#') {
+                        x -= dx;
+                        y -= dy;
+                        break;
+                    }
+
+                    path.push({ x, y });
+
+                    if (cell === 'B') {
+                        bombHit = { x, y };
+                        break;
+                    }
+
+                    if (cell === 'S') {
+                        break;
+                    }
+                }
+
+                return { path, target: { x, y }, bombHit };
+            }
+
+            chooseDirectionFromMouse(px, py, mx, my) {
+                const vx = mx - px;
+                const vy = my - py;
+
+                if (vx === 0 && vy === 0) return null;
+
+                const mag = Math.hypot(vx, vy);
+                const nvx = vx / mag;
+                const nvy = vy / mag;
+
+                let best = null;
+                let bestDot = -999;
+
+                for (const dir of dirs8) {
+                    const mag2 = Math.hypot(dir.x, dir.y);
+                    const ndx = dir.x / mag2;
+                    const ndy = dir.y / mag2;
+                    const dot = nvx * ndx + nvy * ndy;
+
+                    if (dot > bestDot) {
+                        bestDot = dot;
+                        best = dir;
+                    }
+                }
+
+                return best;
+            }
+
+            spawnGemParticles(tilex, tiley) {
+                const cx = tilex * TILE_SIZE + TILE_SIZE / 2;
+                const cy = tiley * TILE_SIZE + TILE_SIZE / 2;
+
+                for (let i = 0; i < 12; i++) {
+                    const angle = (i * (2 * Math.PI / 12)) + Math.random();
+                    const speed = 1 + (i % 3);
+                    const vx = Math.cos(angle) * speed;
+                    const vy = Math.sin(angle) * speed - 2;
+                    this.particles.push(
+                        new Particle(cx, cy, vx, vy, { r: 120, g: 220, b: 220 }, 40, 3)
+                    );
+                }
+            }
+
+            spawnCollectParticles(cx, cy, color = { r: 120, g: 220, b: 220 }) {
+                for (let i = 0; i < 12; i++) {
+                    const vx = (Math.random() - 0.5) * 6;
+                    const vy = (Math.random() - 0.5) * 6;
+                    this.particles.push(
+                        new Particle(cx, cy, vx, vy, color, 40, 3)
+                    );
+                }
+            }
+
+            handleMouseMove(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+
+                const hx = Math.floor(mx / TILE_SIZE);
+                const hy = Math.floor(my / TILE_SIZE);
+
+                if (hx >= 0 && hx < GRID_W && hy >= 0 && hy < GRID_H) {
+                    this.mouseHover = { x: hx, y: hy };
+                } else {
+                    this.mouseHover = { x: -1, y: -1 };
+                }
+            }
+
+            handleClick(e) {
+                if (this.moving || this.gameOver) return;
+
+                const rect = this.canvas.getBoundingClientRect();
+                const mx = e.clientX - rect.left;
+                const my = e.clientY - rect.top;
+
+                const dir = this.chooseDirectionFromMouse(this.playerPos.x, this.playerPos.y, mx, my);
+                if (dir) {
+                    this.initiateMovement(dir.x, dir.y);
+                }
+            }
+
+            handleKeyDown(e) {
+                if (e.key === 'Escape') {
+                    // Could add pause functionality
+                }
+
+                if (e.key.toLowerCase() === 'r') {
+                    this.restartLevel();
+                }
+
+                if (e.key.toLowerCase() === 'n') {
+                    this.nextLevel();
+                }
+
+                if (!this.moving && !this.gameOver) {
+                    let dir = null;
+
+                    if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') dir = { x: 1, y: 0 };
+                    if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') dir = { x: -1, y: 0 };
+                    if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') dir = { x: 0, y: -1 };
+                    if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') dir = { x: 0, y: 1 };
+                    if (e.key.toLowerCase() === 'q') dir = { x: -1, y: -1 };
+                    if (e.key.toLowerCase() === 'e') dir = { x: 1, y: -1 };
+                    if (e.key.toLowerCase() === 'z') dir = { x: -1, y: 1 };
+                    if (e.key.toLowerCase() === 'c') dir = { x: 1, y: 1 };
+
+                    if (dir) {
+                        this.initiateMovement(dir.x, dir.y);
+                    }
+                }
+            }
+
+            initiateMovement(dx, dy) {
+                const result = this.computePathAndTarget(
+                    this.playerTileX,
+                    this.playerTileY,
+                    dx,
+                    dy
+                );
+
+                if (result.path.length > 0) {
+                    this.moving = true;
+                    this.moveDir = { x: dx, y: dy };
+                    this.moveTarget = {
+                        x: result.target.x * TILE_SIZE + TILE_SIZE / 2,
+                        y: result.target.y * TILE_SIZE + TILE_SIZE / 2
+                    };
+                }
+            }
+
+            restartLevel() {
+                this.grid = this.originalGrid.map(row => [...row]);
+                this.totalGems = this.originalTotalGems;
+                this.playerTileX = this.ogPos.x;
+                this.playerTileY = this.ogPos.y;
+                this.gemsCollected = 0;
+                this.gameOver = false;
+                this.gameWon = false;
+                this.moving = false;
+                this.winTimer = null;
+                this.playerPos = {
+                    x: this.playerTileX * TILE_SIZE + TILE_SIZE / 2,
+                    y: this.playerTileY * TILE_SIZE + TILE_SIZE / 2
+                };
+            }
+
+            nextLevel() {
+                this.levelNumber++;
+                this.generateLevel(this.levelNumber);
+            }
+
+            update() {
+                // Update explosion
+                if (this.explosion) {
+                    this.explosion.update();
+                    if (this.explosion.isDead()) {
+                        this.explosion = null;
+                    }
+                }
+
+                // Update particles
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    this.particles[i].update();
+                    if (this.particles[i].isDead()) {
+                        this.particles.splice(i, 1);
+                    }
+                }
+
+                // Handle movement
+                if (this.moving && !this.gameOver) {
+                    const px = this.playerPos.x;
+                    const py = this.playerPos.y;
+                    const tx = this.moveTarget.x;
+                    const ty = this.moveTarget.y;
+
+                    const vx = tx - px;
+                    const vy = ty - py;
+                    const dist = Math.hypot(vx, vy);
+
+                    if (dist <= this.moveSpeed) {
+                        // Reached target
+                        this.playerPos.x = tx;
+                        this.playerPos.y = ty;
+                        this.playerTileX = Math.floor(tx / TILE_SIZE);
+                        this.playerTileY = Math.floor(ty / TILE_SIZE);
+                        this.moving = false;
+
+                        // Check for gem
+                        if (this.tileInBounds(this.playerTileX, this.playerTileY) &&
+                            this.grid[this.playerTileY][this.playerTileX] === 'G') {
+                            this.grid[this.playerTileY][this.playerTileX] = '.';
+                            this.gemsCollected++;
+                            this.spawnCollectParticles(
+                                this.playerTileX * TILE_SIZE + TILE_SIZE / 2,
+                                this.playerTileY * TILE_SIZE + TILE_SIZE / 2,
+                                { r: 120, g: 220, b: 220 }
+                            );
+                        }
+
+                        // Check for bomb
+                        if (this.tileInBounds(this.playerTileX, this.playerTileY) &&
+                            this.grid[this.playerTileY][this.playerTileX] === 'B') {
+                            const bx = this.playerTileX * TILE_SIZE + TILE_SIZE / 2;
+                            const by = this.playerTileY * TILE_SIZE + TILE_SIZE / 2;
+                            this.spawnCollectParticles(bx, by, { r: 220, g: 80, b: 10 });
+                            this.explosion = new Explosion(bx, by);
+                            this.gameOver = true;
+                        } else {
+                            // Check for win
+                            if (this.totalGems > 0 && this.gemsCollected >= this.totalGems) {
+                                this.gameWon = true;
+                            }
+                        }
+                    } else {
+                        // Move towards target
+                        const nvx = vx / dist;
+                        const nvy = vy / dist;
+                        this.playerPos.x += nvx * this.moveSpeed;
+                        this.playerPos.y += nvy * this.moveSpeed;
+
+                        const cx = Math.floor(this.playerPos.x / TILE_SIZE);
+                        const cy = Math.floor(this.playerPos.y / TILE_SIZE);
+
+                        // Check for gems while moving
+                        if (this.tileInBounds(cx, cy) && this.grid[cy][cx] === 'G') {
+                            this.grid[cy][cx] = '.';
+                            this.gemsCollected++;
+                            this.spawnCollectParticles(
+                                cx * TILE_SIZE + TILE_SIZE / 2,
+                                cy * TILE_SIZE + TILE_SIZE / 2,
+                                { r: 120, g: 220, b: 220 }
+                            );
+                        }
+
+                        // Check for bombs while moving
+                        if (this.tileInBounds(cx, cy) && this.grid[cy][cx] === 'B') {
+                            const bx = cx * TILE_SIZE + TILE_SIZE / 2;
+                            const by = cy * TILE_SIZE + TILE_SIZE / 2;
+                            this.spawnCollectParticles(bx, by, { r: 220, g: 80, b: 10 });
+                            this.explosion = new Explosion(bx, by);
+                            this.moving = false;
+                            this.gameOver = true;
+                        }
+
+                        // Add trailing particles
+                        if (Math.random() < 0.35) {
+                            const px = this.playerPos.x + (Math.random() - 0.5) * 6;
+                            const py = this.playerPos.y + (Math.random() - 0.5) * 6;
+                            this.particles.push(
+                                new Particle(px, py, (Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.6, { r: 50, g: 200, b: 100 }, 18, 2)
+                            );
+                        }
+                    }
+                }
+
+                // Handle win auto-advance
+                if (this.gameWon && !this.moving) {
+                    if (this.winTimer === null) {
+                        this.winTimer = 36000; // 1 minute at 60fps
+                    } else {
+                        this.winTimer--;
+                        if (this.winTimer <= 0) {
+                            this.nextLevel();
+                        }
+                    }
+                }
+            }
+
+            drawVerticalGradient(x, y, width, height, colorTop, colorBottom) {
+                const gradient = this.ctx.createLinearGradient(0, y, 0, y + height);
+                gradient.addColorStop(0, `rgb(${colorTop.r}, ${colorTop.g}, ${colorTop.b})`);
+                gradient.addColorStop(1, `rgb(${colorBottom.r}, ${colorBottom.g}, ${colorBottom.b})`);
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(x, y, width, height);
+            }
+
+            drawGlossyCircle(x, y, radius, baseColor, rimColor = { r: 255, g: 255, b: 255 }) {
+                // Draw concentric circles for depth
+                const layers = Math.max(6, Math.floor(radius / 3));
+                for (let i = layers; i > 0; i--) {
+                    const r = Math.floor(radius * (i / layers));
+                    const alpha = Math.floor(200 * (i / layers)) / 255;
+                    this.ctx.fillStyle = `rgba(${baseColor.r}, ${baseColor.g}, ${baseColor.b}, ${alpha})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(x, y, r, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Draw rim highlight
+                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                this.ctx.beginPath();
+                this.ctx.arc(x, y, Math.floor(radius * 0.6), 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+
+            drawGlossyGem(tilex, tiley) {
+                const cx = tilex * TILE_SIZE + TILE_SIZE / 2;
+                const cy = tiley * TILE_SIZE + TILE_SIZE / 2;
+                const r = Math.floor(TILE_SIZE / 4);
+
+                // Diamond shape
+                const pts = [
+                    { x: cx, y: cy - r },
+                    { x: cx + r, y: cy },
+                    { x: cx, y: cy + r },
+                    { x: cx - r, y: cy }
+                ];
+
+                // Draw diamond with gradient
+                this.ctx.fillStyle = 'rgb(120, 220, 220)';
+                this.ctx.beginPath();
+                this.ctx.moveTo(pts[0].x, pts[0].y);
+                for (let i = 1; i < pts.length; i++) {
+                    this.ctx.lineTo(pts[i].x, pts[i].y);
+                }
+                this.ctx.closePath();
+                this.ctx.fill();
+
+                // Outline
+                this.ctx.strokeStyle = 'rgb(40, 140, 140)';
+                this.ctx.lineWidth = 1;
+                this.ctx.stroke();
+
+                // Shine
+                this.ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                this.ctx.beginPath();
+                this.ctx.moveTo(cx - Math.floor(r / 2), cy - Math.floor(r / 2));
+                this.ctx.lineTo(cx + Math.floor(r / 4), cy - Math.floor(r / 2));
+                this.ctx.lineTo(cx + Math.floor(r / 2), cy);
+                this.ctx.closePath();
+                this.ctx.fill();
+            }
+
+            drawGlossyBomb(tilex, tiley) {
+                const cx = tilex * TILE_SIZE + TILE_SIZE / 2;
+                const cy = tiley * TILE_SIZE + TILE_SIZE / 2;
+                const r = Math.floor(TILE_SIZE / 3);
+
+                // Glow
+                for (let i = r * 2; i > 0; i -= 6) {
+                    const alpha = (50 * (i / (r * 2))) / 255;
+                    this.ctx.fillStyle = `rgba(220, 80, 10, ${alpha})`;
+                    this.ctx.beginPath();
+                    this.ctx.arc(cx, cy, i, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+
+                // Core
+                this.ctx.fillStyle = 'rgb(40, 40, 40)';
+                this.ctx.beginPath();
+                this.ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                this.ctx.fill();
+
+                // Hot spot
+                this.ctx.fillStyle = 'rgb(180, 60, 40)';
+                this.ctx.beginPath();
+                this.ctx.arc(
+                    cx + Math.floor(r * 0.2),
+                    cy - Math.floor(r * 0.3),
+                    Math.floor(r * 0.4),
+                    0,
+                    Math.PI * 2
+                );
+                this.ctx.fill();
+
+                // Outline
+                this.ctx.strokeStyle = 'rgb(0, 0, 0)';
+                this.ctx.lineWidth = 1;
+                this.ctx.beginPath();
+                this.ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                this.ctx.stroke();
+            }
+
+            drawTileBevel(x, y, size) {
+                // Base tile
+                this.ctx.fillStyle = 'rgb(240, 240, 240)';
+                this.ctx.fillRect(x, y, size, size);
+
+                // Top highlight
+                const gradient = this.ctx.createLinearGradient(0, y, 0, y + size / 2);
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                this.ctx.fillStyle = gradient;
+                this.ctx.fillRect(x + 2, y + 2, size - 4, Math.floor(size / 2));
+            }
+
+            draw() {
+                // Clear and draw background
+                this.drawVerticalGradient(0, 0, WIDTH, HEIGHT, { r: 210, g: 220, b: 240 }, { r: 180, g: 190, b: 210 });
+
+                // Compute preview path
+                let previewPath = [];
+                let previewTarget = null;
+                if (!this.moving && !this.gameOver) {
+                    const mx = this.mouseHover.x * TILE_SIZE + TILE_SIZE / 2;
+                    const my = this.mouseHover.y * TILE_SIZE + TILE_SIZE / 2;
+                    const dir = this.chooseDirectionFromMouse(this.playerPos.x, this.playerPos.y, mx, my);
+                    if (dir) {
+                        const result = this.computePathAndTarget(this.playerTileX, this.playerTileY, dir.x, dir.y);
+                        previewPath = result.path;
+                        previewTarget = result.target;
+                    }
+                }
+
+                // Draw tiles
+                for (let y = 0; y < GRID_H; y++) {
+                    for (let x = 0; x < GRID_W; x++) {
+                        const cell = this.grid[y][x];
+                        const tx = x * TILE_SIZE;
+                        const ty = y * TILE_SIZE;
+
+                        if (cell === '#') {
+                            // Wall
+                            this.ctx.fillStyle = 'rgb(110, 110, 120)';
+                            this.ctx.fillRect(tx, ty, TILE_SIZE, TILE_SIZE);
+                            this.ctx.strokeStyle = 'rgb(90, 90, 95)';
+                            this.ctx.lineWidth = 2;
+                            this.ctx.strokeRect(tx + 3, ty + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+                        } else {
+                            this.drawTileBevel(tx, ty, TILE_SIZE);
+                        }
+
+                        // Special floor
+                        if (cell === 'S') {
+                            this.ctx.fillStyle = 'rgb(200, 200, 200)';
+                            this.ctx.fillRect(tx + 3, ty + 3, TILE_SIZE - 6, TILE_SIZE - 6);
+                            this.ctx.strokeStyle = 'rgb(40, 40, 40)';
+                            this.ctx.lineWidth = 3;
+                            this.ctx.strokeRect(tx, ty, TILE_SIZE, TILE_SIZE);
+                        }
+
+                        // Draw bomb
+                        if (cell === 'B') {
+                            this.drawGlossyBomb(x, y);
+                        }
+
+                        // Draw gem
+                        if (cell === 'G') {
+                            this.drawGlossyGem(x, y);
+                        }
+
+                        // Draw preview overlay
+                        if (previewPath.some(p => p.x === x && p.y === y)) {
+                            this.ctx.fillStyle = 'rgba(255, 255, 120, 0.23)';
+                            this.ctx.fillRect(tx, ty, TILE_SIZE, TILE_SIZE);
+                        }
+
+                        // Draw preview target marker
+                        if (previewTarget && previewTarget.x === x && previewTarget.y === y) {
+                            this.ctx.strokeStyle = 'rgb(255, 220, 120)';
+                            this.ctx.lineWidth = 3;
+                            this.ctx.strokeRect(
+                                tx + Math.floor(TILE_SIZE / 4),
+                                ty + Math.floor(TILE_SIZE / 4),
+                                Math.floor(TILE_SIZE / 2),
+                                Math.floor(TILE_SIZE / 2)
+                            );
+                        }
+
+                        // Draw hover highlight
+                        if (this.mouseHover.x === x && this.mouseHover.y === y && !this.moving) {
+                            this.ctx.strokeStyle = 'rgb(255, 255, 200)';
+                            this.ctx.lineWidth = 3;
+                            this.ctx.strokeRect(tx, ty, TILE_SIZE, TILE_SIZE);
+                        }
+
+                        // Grid lines
+                        this.ctx.strokeStyle = 'rgb(150, 150, 150)';
+                        this.ctx.lineWidth = 1;
+                        this.ctx.strokeRect(tx, ty, TILE_SIZE, TILE_SIZE);
+                    }
+                }
+
+                // Draw particles
+                for (const particle of this.particles) {
+                    particle.draw(this.ctx);
+                }
+
+                // Draw player
+                this.drawGlossyCircle(
+                    this.playerPos.x,
+                    this.playerPos.y,
+                    Math.floor(TILE_SIZE / 3),
+                    { r: 20, g: 180, b: 60 }
+                );
+
+                // Draw explosion
+                if (this.explosion) {
+                    this.explosion.draw(this.ctx);
+                }
+
+                // Draw HUD
+                const hudW = 220;
+                const hudH = 20;
+                const hudX = 8;
+                const hudY = HEIGHT - hudH - 8;
+
+                // HUD panel shadow
+                this.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                this.ctx.fillRect(hudX + 4, hudY + 4, hudW, hudH);
+
+                // HUD panel background
+                this.ctx.fillStyle = 'rgba(245, 245, 250, 0.86)';
+                this.ctx.fillRect(hudX, hudY, hudW, hudH);
+                this.ctx.strokeStyle = 'rgb(200, 200, 210)';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(hudX, hudY, hudW, hudH);
+
+                // Gem icon
+                const gx = hudX + 12;
+                const gy = hudY + hudH / 2;
+                const gr = 10;
+                this.ctx.fillStyle = 'rgb(120, 220, 220)';
+                this.ctx.beginPath();
+                this.ctx.moveTo(gx, gy - gr);
+                this.ctx.lineTo(gx + gr, gy);
+                this.ctx.lineTo(gx, gy + gr);
+                this.ctx.lineTo(gx - gr, gy);
+                this.ctx.closePath();
+                this.ctx.fill();
+                this.ctx.strokeStyle = 'rgb(80, 180, 180)';
+                this.ctx.lineWidth = 1;
+                this.ctx.stroke();
+
+                // HUD text
+                this.ctx.fillStyle = 'rgb(20, 20, 20)';
+                this.ctx.font = 'bold 14px Arial';
+                this.ctx.textAlign = 'left';
+                this.ctx.fillText(`${this.gemsCollected} / ${this.totalGems}`, gx + 28, hudY + hudH / 2 + 4);
+
+                // Level text
+                this.ctx.textAlign = 'right';
+                this.ctx.fillText(`Level ${this.levelNumber}`, hudX + hudW - 12, hudY + hudH / 2 + 4);
+
+                // Draw messages
+                if (this.gameOver) {
+                    this.ctx.fillStyle = 'rgb(255, 0, 0)';
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText('Game Over - Hit a bomb. Press R to restart.', 6, 20);
+                }
+
+                if (this.gameWon) {
+                    this.ctx.fillStyle = 'rgb(0, 150, 0)';
+                    this.ctx.font = 'bold 16px Arial';
+                    this.ctx.textAlign = 'left';
+                    this.ctx.fillText('All gems collected! Press R to restart or N for next level.', 6, 20);
+                }
+            }
+
+            startGameLoop() {
+                const loop = () => {
+                    this.update();
+                    this.draw();
+                    requestAnimationFrame(loop);
+                };
+                loop();
+            }
+        }
+
+        // Seedrandom implementation
+        window.Math.seedrandom = (function() {
+            const autoseed = function() {
+                try {
+                    const n = new Uint32Array(1);
+                    crypto.getRandomValues(n);
+                    return n[0] >>> 0;
+                } catch (e) {
+                    return (new Date()).getTime();
+                }
+            };
+
+            return function(seed) {
+                if (seed === undefined) seed = autoseed();
+                seed = new String(seed).substring(0, 256);
+
+                let pool = [];
+                let section = 'default';
+                let N = 256;
+
+                function stir() {
+                    for (let i = 0; i < N; i++) {
+                        seed += String.fromCharCode(Math.floor(Math.random() * 256));
+                    }
+                }
+
+                // Initialize pool
+                for (let i = 0; i < N; i++) {
+                    pool[i] = seed.charCodeAt(i % seed.length) || 0;
+                }
+
+                // Shuffle using seed
+                let j = 0;
+                for (let i = N - 1; i > 0; i--) {
+                    j = Math.floor((seed.charCodeAt(j % seed.length) + pool[i]) * 9e-10 * i);
+                    const t = pool[i];
+                    pool[i] = pool[j];
+                    pool[j] = t;
+                }
+
+                let idx = 0;
+
+                Math.random = function() {
+                    const n = pool[idx];
+                    const r = n / 256;
+                    idx = (idx + 1) % 256;
+                    return r;
+                };
+            };
+        }());
+
+        // Initialize game
+        const canvas = document.getElementById('gameCanvas');
+        const game = new Game(canvas);
+    </script>
+</body>
+</html>
