@@ -166,36 +166,72 @@ particles = []
 class Explosion:
     def __init__(self, pos):
         self.pos = pos
-        self.life = 80
-        self.max_life = 80
+        # make the explosion last longer for a big, satisfying blow
+        self.max_life = 120
+        self.life = self.max_life
         self.radius = 0
-        self.max_radius = max(WIDTH, HEIGHT) * 1.2
+        # compute distance to farthest corner so the blast covers the whole screen
+        cx, cy = int(pos[0]), int(pos[1])
+        corners = [(0, 0), (WIDTH, 0), (0, HEIGHT), (WIDTH, HEIGHT)]
+        max_dist = 0
+        for (x, y) in corners:
+            d = math.hypot(cx - x, cy - y)
+            if d > max_dist:
+                max_dist = d
+        self.max_radius = int(max_dist * 1.35)
+
+        # spawn a lot of debris/flash particles for impact
+        for i in range(120):
+            ang = random.random() * 2 * math.pi
+            speed = random.uniform(2.5, 12.0)
+            vx = math.cos(ang) * speed
+            vy = math.sin(ang) * speed
+            color = (255, 210, 140) if random.random() < 0.6 else (220, 80, 10)
+            life = random.randint(40, 100)
+            rad = random.randint(2, 4)
+            particles.append(Particle((cx, cy), (vx, vy), color, life, rad))
 
     def update(self):
-        t = (self.max_life - self.life) / self.max_life
-        self.radius = int(self.max_radius * (t))
+        # ease the expansion slightly for a pleasing curve
+        progress = 1.0 - (self.life / self.max_life)
+        eased = progress ** 0.85
+        self.radius = int(self.max_radius * eased)
         self.life -= 1
 
     def draw(self, surf):
-        # flash center bright then expand to fill
         cx, cy = int(self.pos[0]), int(self.pos[1])
-        progress = 1 - (self.life / self.max_life)
-        # draw expanding radial circles
-        alpha = int(220 * (1 - self.life / self.max_life))
+        prog = 1.0 - (self.life / self.max_life)
+
+        # big additive glow that fills the screen
         glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        rr = int(self.max_radius * progress)
-        if rr < 4:
-            rr = 4
-        # strong core
-        pygame.gfxdraw.filled_circle(glow, cx, cy, rr, (255, 180, 80, alpha))
-        # additive overlay
+        # draw multiple rings to make the blast feel voluminous
+        for i in range(6, 0, -1):
+            t = prog * (0.8 + i * 0.04)
+            rr = int(self.max_radius * min(1.0, t))
+            if rr < 2:
+                rr = 2
+            a = int(200 * (1.0 - (i - 1) / 6.0) * min(1.0, prog * 1.5))
+            col = (255, 200 - i * 10, 120, a)
+            try:
+                pygame.gfxdraw.filled_circle(glow, cx, cy, rr, col)
+            except Exception:
+                pass
+
         surf.blit(glow, (0, 0), special_flags=pygame.BLEND_ADD)
-        # white flash overlay diminishing
-        flash = int(160 * (1 - self.life / self.max_life))
-        if flash > 0:
+
+        # intense white flash at the start of the blast
+        flash_strength = int(255 * min(1.0, prog * 2.2))
+        if flash_strength > 8:
             f = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            f.fill((255, 220, 200, min(220, flash)))
+            f.fill((255, 245, 230, min(255, flash_strength)))
             surf.blit(f, (0, 0))
+
+        # subtle vignette darkening after the flash for contrast
+        if prog > 0.25:
+            dark = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            alpha = int(180 * min(1.0, (prog - 0.25) / 0.75))
+            dark.fill((20, 12, 6, alpha))
+            surf.blit(dark, (0, 0), special_flags=pygame.BLEND_RGBA_SUB)
 
 
 explosion = None
