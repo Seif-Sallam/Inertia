@@ -162,6 +162,44 @@ class Particle:
 
 particles = []
 
+# Explosion effect for massive screen blow
+class Explosion:
+    def __init__(self, pos):
+        self.pos = pos
+        self.life = 80
+        self.max_life = 80
+        self.radius = 0
+        self.max_radius = max(WIDTH, HEIGHT) * 1.2
+
+    def update(self):
+        t = (self.max_life - self.life) / self.max_life
+        self.radius = int(self.max_radius * (t))
+        self.life -= 1
+
+    def draw(self, surf):
+        # flash center bright then expand to fill
+        cx, cy = int(self.pos[0]), int(self.pos[1])
+        progress = 1 - (self.life / self.max_life)
+        # draw expanding radial circles
+        alpha = int(220 * (1 - self.life / self.max_life))
+        glow = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        rr = int(self.max_radius * progress)
+        if rr < 4:
+            rr = 4
+        # strong core
+        pygame.gfxdraw.filled_circle(glow, cx, cy, rr, (255, 180, 80, alpha))
+        # additive overlay
+        surf.blit(glow, (0, 0), special_flags=pygame.BLEND_ADD)
+        # white flash overlay diminishing
+        flash = int(160 * (1 - self.life / self.max_life))
+        if flash > 0:
+            f = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            f.fill((255, 220, 200, min(220, flash)))
+            surf.blit(f, (0, 0))
+
+
+explosion = None
+
 def tile_in_bounds(x, y):
     return 0 <= x < GRID_W and 0 <= y < GRID_H
 
@@ -289,11 +327,6 @@ def choose_direction_from_mouse(mx, my):
             best = d
     return best
 
-font = pygame.font.SysFont(None, 20)
-font_big = pygame.font.SysFont(None, 26)
-
-running = True
-
 # track mouse hover
 mouse_hover = (-1, -1)
 
@@ -313,7 +346,9 @@ def spawn_collect_particles(cx, cy, color=(120,220,220)):
         vy = (random.random() - 0.5) * 6
         particles.append(Particle((cx, cy), (vx, vy), color, 40, 3))
 # (mouse hover variable defined above)
-
+font = pygame.font.SysFont(None, 20)
+font_big = pygame.font.SysFont(None, 26)
+running = True
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -390,15 +425,30 @@ while running:
         vy = ty - py
         dist = math.hypot(vx, vy)
         if dist <= move_speed:
+            # land exactly on target
             player_pos[0], player_pos[1] = tx, ty
             player_tile_x = tx // TILE_SIZE
             player_tile_y = ty // TILE_SIZE
             moving = False
+            # if we land on a gem, collect it now
+            if tile_in_bounds(player_tile_x, player_tile_y) and grid[player_tile_y][player_tile_x] == 'G':
+                grid[player_tile_y][player_tile_x] = '.'
+                gems_collected += 1
+                px = player_tile_x * TILE_SIZE + TILE_SIZE // 2
+                py = player_tile_y * TILE_SIZE + TILE_SIZE // 2
+                spawn_collect_particles(px, py, (120, 220, 220))
+            # if we land on a bomb, trigger massive explosion centered on that bomb
             if tile_in_bounds(player_tile_x, player_tile_y) and grid[player_tile_y][player_tile_x] == 'B':
                 bx = player_tile_x * TILE_SIZE + TILE_SIZE // 2
                 by = player_tile_y * TILE_SIZE + TILE_SIZE // 2
                 spawn_collect_particles(bx, by, (220, 80, 10))
+                explosion = Explosion((bx, by))
+                moving = False
                 game_over = True
+            else:
+                # only check win when we landed and didn't hit a bomb
+                if total_gems > 0 and gems_collected >= total_gems:
+                    game_won = True
         else:
             vx /= dist
             vy /= dist
@@ -407,24 +457,29 @@ while running:
             cx = int(player_pos[0]) // TILE_SIZE
             cy = int(player_pos[1]) // TILE_SIZE
             if tile_in_bounds(cx, cy) and grid[cy][cx] == 'G':
-                # collect gem and spawn particles
+                # collect gem and spawn particles (but do not declare win until we stop moving)
                 grid[cy][cx] = '.'
                 gems_collected += 1
                 px = cx * TILE_SIZE + TILE_SIZE // 2
                 py = cy * TILE_SIZE + TILE_SIZE // 2
                 spawn_collect_particles(px, py, (120, 220, 220))
-                if gems_collected >= total_gems:
-                    game_won = True
-                    moving = False
             if tile_in_bounds(cx, cy) and grid[cy][cx] == 'B':
-                # bomb explosion particles
+                # bomb explosion particles and spawn screen explosion
                 bx = cx * TILE_SIZE + TILE_SIZE // 2
                 by = cy * TILE_SIZE + TILE_SIZE // 2
                 spawn_collect_particles(bx, by, (220, 80, 10))
+                explosion = Explosion((bx, by))
+                moving = False
                 game_over = True
 
-    # handle level win auto-advance
-    if game_won:
+    # handle explosion update (draw later on top)
+    if explosion is not None:
+        explosion.update()
+        if explosion.life <= 0:
+            explosion = None
+
+    # handle level win auto-advance (only when not moving)
+    if game_won and not moving:
         if win_timer is None:
             win_timer = 60  # 1 second @ 60fps
         else:
