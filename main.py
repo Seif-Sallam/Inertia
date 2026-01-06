@@ -16,22 +16,8 @@ pygame.display.set_caption("Inertia")
 
 clock = pygame.time.Clock()
 
-LEVEL = [
-    "..#..#....",
-    ".G.#.##.B.",
-    "..##...##.",
-    ".S..##....",
-    ".###.#####",
-    "..G..P..G.",
-    "...##..#..",
-    ".B..##..G.",
-    "..G..##..G",
-    "....#.....",
-]
+LEVEL = None
 
-assert len(LEVEL) == GRID_H and all(len(r) == GRID_W for r in LEVEL)
-
-grid = [list(row) for row in LEVEL]
 
 def find_player():
     for y in range(GRID_H):
@@ -39,23 +25,114 @@ def find_player():
             if grid[y][x] == 'P':
                 grid[y][x] = '.'
                 return x, y
-    return 1, 1
+    # fallback center
+    return GRID_W // 2, GRID_H // 2
 
-player_tile_x, player_tile_y = find_player()
-player_pos = [player_tile_x * TILE_SIZE + TILE_SIZE // 2, player_tile_y * TILE_SIZE + TILE_SIZE // 2]
-moving = False
-move_target = [0, 0]
-move_dir = (0, 0)
-move_speed = 6.0
+
+# Procedural level generation for infinite games
+level_number = 1
+win_timer = None
+
+
+def generate_level(level=1, seed=None):
+    global grid, total_gems, player_tile_x, player_tile_y, gems_collected, game_over, game_won
+    if seed is None:
+        seed = random.randrange(1 << 30)
+    random.seed(seed)
+    # difficulty scaling
+    wall_density = min(0.12 + level * 0.01, 0.30)
+    bomb_density = min(0.04 + level * 0.01, 0.25)
+    gem_density = min(0.06 + level * 0.005, 0.25)
+
+    # start with empty grid
+    grid = [['.' for _ in range(GRID_W)] for _ in range(GRID_H)]
+    # border walls
+    for x in range(GRID_W):
+        grid[0][x] = '#'
+        grid[GRID_H-1][x] = '#'
+    for y in range(GRID_H):
+        grid[y][0] = '#'
+        grid[y][GRID_W-1] = '#'
+
+    # carve some walls randomly
+    cells = GRID_W * GRID_H
+    for _ in range(int(cells * wall_density)):
+        x = random.randrange(1, GRID_W-1)
+        y = random.randrange(1, GRID_H-1)
+        grid[y][x] = '#'
+
+    # place a random walk to create some start (S) tiles and ensure path
+    sx, sy = GRID_W // 2, GRID_H // 2
+    steps = GRID_W * GRID_H * 2
+    grid[sy][sx] = 'S'
+    walk_x, walk_y = sx, sy
+    for i in range(steps):
+        dx, dy = random.choice(dirs8)
+        nx, ny = walk_x + dx, walk_y + dy
+        if 1 <= nx < GRID_W-1 and 1 <= ny < GRID_H-1:
+            walk_x, walk_y = nx, ny
+            # clear wall to ensure path
+            grid[walk_y][walk_x] = '.'
+            if i % max(6, 8 - level//5) == 0:
+                grid[walk_y][walk_x] = 'S'
+
+    # place player at first S (or center)
+    placed = False
+    for y in range(GRID_H):
+        for x in range(GRID_W):
+            if grid[y][x] == 'S':
+                grid[y][x] = 'P'
+                placed = True
+                break
+        if placed:
+            break
+    if not placed:
+        grid[GRID_H//2][GRID_W//2] = 'P'
+    player_tile_x, player_tile_y = find_player()
+
+    # place gems and bombs on empty tiles
+    total_gems = 0
+    for y in range(1, GRID_H-1):
+        for x in range(1, GRID_W-1):
+            if grid[y][x] == '.':
+                r = random.random()
+                if r < gem_density:
+                    grid[y][x] = 'G'
+                    total_gems += 1
+                elif r < gem_density + bomb_density:
+                    grid[y][x] = 'B'
+
+    # ensure at least one gem
+    if total_gems == 0:
+        placed = False
+        for y in range(1, GRID_H-1):
+            for x in range(1, GRID_W-1):
+                if grid[y][x] == '.':
+                    grid[y][x] = 'G'
+                    total_gems = 1
+                    placed = True
+                    break
+            if placed:
+                break
+
+    # reset counters
+    gems_collected = 0
+    game_over = False
+    game_won = False
+
 
 dirs8 = [
     (1, 0), (1, -1), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1)
 ]
 
-gems_collected = 0
-game_over = False
-game_won = False
-total_gems = sum(row.count('G') for row in LEVEL)
+# generate initial level
+grid = None
+generate_level(level_number)
+player_pos = [player_tile_x * TILE_SIZE + TILE_SIZE // 2, player_tile_y * TILE_SIZE + TILE_SIZE // 2]
+moving = False
+move_target = [0, 0]
+move_dir = (0, 0)
+move_speed = 6.0
 
 # Particles for polish effects
 class Particle:
@@ -210,6 +287,7 @@ def choose_direction_from_mouse(mx, my):
     return best
 
 font = pygame.font.SysFont(None, 20)
+font_big = pygame.font.SysFont(None, 26)
 
 running = True
 
@@ -238,17 +316,14 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_ESCAPE or event.key == pygame.K_q:
+            if event.key == pygame.K_ESCAPE:
                 running = False
             if event.key == pygame.K_r:
-                # restart
-                grid = [list(row) for row in LEVEL]
-                player_tile_x, player_tile_y = find_player()
+                # restart current level
+                generate_level(level_number)
                 player_pos = [player_tile_x * TILE_SIZE + TILE_SIZE // 2, player_tile_y * TILE_SIZE + TILE_SIZE // 2]
                 moving = False
-                gems_collected = 0
-                game_over = False
-                game_won = False
+                win_timer = None
             # keyboard directional controls (arrows, WASD, Q/E/Z/C for diagonals, keypad)
             if not moving and not game_over:
                 key_dir = None
@@ -286,6 +361,13 @@ while running:
                         move_target = [target_tile[0] * TILE_SIZE + TILE_SIZE // 2, target_tile[1] * TILE_SIZE + TILE_SIZE // 2]
                         target_path = path
                         bomb_in_path = bomb
+            if event.key == pygame.K_n:
+                # next level
+                level_number += 1
+                generate_level(level_number)
+                player_pos = [player_tile_x * TILE_SIZE + TILE_SIZE // 2, player_tile_y * TILE_SIZE + TILE_SIZE // 2]
+                moving = False
+                win_timer = None
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and not moving and not game_over:
             mx, my = event.pos
             d = choose_direction_from_mouse(mx, my)
@@ -338,7 +420,23 @@ while running:
                 spawn_collect_particles(bx, by, (220, 80, 10))
                 game_over = True
 
-    screen.fill((200, 200, 200))
+    # handle level win auto-advance
+    if game_won:
+        if win_timer is None:
+            win_timer = 60  # 1 second @ 60fps
+        else:
+            win_timer -= 1
+            if win_timer <= 0:
+                level_number += 1
+                generate_level(level_number)
+                player_pos = [player_tile_x * TILE_SIZE + TILE_SIZE // 2, player_tile_y * TILE_SIZE + TILE_SIZE // 2]
+                moving = False
+                win_timer = None
+
+    # background gradient
+    bg = pygame.Surface((WIDTH, HEIGHT))
+    draw_vertical_gradient(bg, (210, 220, 240), (180, 190, 210))
+    screen.blit(bg, (0, 0))
 
     # update mouse hover tile
     mx, my = pygame.mouse.get_pos()
@@ -364,36 +462,18 @@ while running:
             rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
             cell = grid[y][x]
             if cell == '#':
-                pygame.draw.rect(screen, (120, 120, 120), rect)
+                # wall tile
+                pygame.draw.rect(screen, (110, 110, 120), rect, border_radius=6)
+                pygame.draw.rect(screen, (90, 90, 95), rect.inflate(-6, -6), 2, border_radius=5)
             else:
-                pygame.draw.rect(screen, (230, 230, 230), rect)
+                draw_tile_bevel(screen, rect)
             if cell == 'S':
-                pygame.draw.rect(screen, (200, 200, 200), rect)
-                pygame.draw.rect(screen, (0, 0, 0), rect, 3)
+                pygame.draw.rect(screen, (200, 200, 200), rect.inflate(-6, -6), 0, border_radius=4)
+                pygame.draw.rect(screen, (40, 40, 40), rect, 3, border_radius=6)
             if cell == 'B':
-                cx = x * TILE_SIZE + TILE_SIZE // 2
-                cy = y * TILE_SIZE + TILE_SIZE // 2
-                # pulsing bomb
-                t = pygame.time.get_ticks() * 0.006
-                pulse = 1 + 0.08 * math.sin(t + x + y)
-                r = int(TILE_SIZE // 3 * pulse)
-                pygame.draw.circle(screen, (30, 30, 30), (cx, cy), r)
-                pygame.draw.circle(screen, (0, 0, 0), (cx, cy), max(2, r-6))
+                draw_glossy_bomb(screen, x, y)
             if cell == 'G':
-                # animated gem pulse
-                cx = x * TILE_SIZE + TILE_SIZE // 2
-                cy = y * TILE_SIZE + TILE_SIZE // 2
-                t = pygame.time.get_ticks() * 0.008
-                s = 1.0 + 0.12 * math.sin(t + x * 0.4 + y * 0.6)
-                r = int((TILE_SIZE // 4) * s)
-                pts = [
-                    (cx, cy - r),
-                    (cx + r, cy),
-                    (cx, cy + r),
-                    (cx - r, cy),
-                ]
-                pygame.draw.polygon(screen, (120, 220, 220), pts)
-                pygame.draw.polygon(screen, (80, 180, 180), pts, 2)
+                draw_glossy_gem(screen, x, y)
             # preview overlay
             if (x, y) in preview_path:
                 s = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
@@ -405,8 +485,8 @@ while running:
                 pygame.draw.rect(screen, (255, 220, 120), tt, 3, border_radius=6)
             # highlight hovered tile when not moving
             if (x, y) == mouse_hover and not moving:
-                pygame.draw.rect(screen, (255, 255, 200), rect, 3)
-            pygame.draw.rect(screen, (150, 150, 150), rect, 1)
+                pygame.draw.rect(screen, (255, 255, 200), rect, 3, border_radius=6)
+            pygame.draw.rect(screen, (150, 150, 150), rect, 1, border_radius=6)
 
     # update and draw particles (behind player)
     for p in particles[:]:
@@ -422,10 +502,35 @@ while running:
             py = player_pos[1] + (random.random() - 0.5) * 6
             particles.append(Particle((px, py), ((random.random()-0.5)*0.6, (random.random()-0.5)*0.6), (50,200,100), 18, 2))
 
-    pygame.draw.circle(screen, (0, 180, 0), (int(player_pos[0]), int(player_pos[1])), TILE_SIZE // 3)
+    # draw player glossy (no shadow)
+    draw_glossy_circle(screen, player_pos, TILE_SIZE // 3, (20, 180, 60))
 
-    hud = font.render(f"Gems: {gems_collected}/{total_gems}", True, (0, 0, 0))
-    screen.blit(hud, (6, HEIGHT - 24))
+    # HUD panel
+    hud_w, hud_h = 220, 40
+    hud_x, hud_y = 8, HEIGHT - hud_h - 8
+    # panel shadow
+    sh = pygame.Surface((hud_w, hud_h), pygame.SRCALPHA)
+    pygame.draw.rect(sh, (0,0,0,80), sh.get_rect(), border_radius=8)
+    screen.blit(sh, (hud_x+4, hud_y+4))
+    # panel bg
+    panel = pygame.Surface((hud_w, hud_h), pygame.SRCALPHA)
+    pygame.draw.rect(panel, (245,245,250,220), panel.get_rect(), border_radius=8)
+    pygame.draw.rect(panel, (200,200,210), panel.get_rect(), 2, border_radius=8)
+    screen.blit(panel, (hud_x, hud_y))
+    # gem icon
+    gx = hud_x + 12
+    gy = hud_y + hud_h//2
+    # draw small gem
+    gr = 10
+    gpts = [(gx, gy - gr), (gx + gr, gy), (gx, gy + gr), (gx - gr, gy)]
+    pygame.draw.polygon(screen, (120,220,220), gpts)
+    pygame.draw.polygon(screen, (80,180,180), gpts, 1)
+    # text
+    hud_text = font_big.render(f"{gems_collected} / {total_gems}", True, (20,20,20))
+    screen.blit(hud_text, (gx + 28, hud_y + hud_h//2 - hud_text.get_height()//2))
+    # level display
+    lvl_text = font_big.render(f"Level {level_number}", True, (60,60,70))
+    screen.blit(lvl_text, (hud_x + hud_w - lvl_text.get_width() - 12, hud_y + hud_h//2 - lvl_text.get_height()//2))
 
     if game_over:
         over = font.render("Game Over - You hit a bomb. Press R to restart.", True, (200, 0, 0))
