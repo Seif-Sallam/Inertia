@@ -6,10 +6,12 @@ import pygame.gfxdraw
 
 pygame.init()
 
-TILE_SIZE = 48
-GRID_W, GRID_H = 10, 10
-WIDTH = GRID_W * TILE_SIZE
-HEIGHT = GRID_H * TILE_SIZE
+WIDTH = 480
+HEIGHT = 480
+# smaller tiles to fit more on same window
+TILE_SIZE = 32
+GRID_W = WIDTH // TILE_SIZE
+GRID_H = HEIGHT // TILE_SIZE
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Inertia")
